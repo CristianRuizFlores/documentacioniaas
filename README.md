@@ -315,24 +315,25 @@ Funciones estandarizadas para el ambiente web público sin credenciales explíci
 
 ## 8. Archivos, Notificaciones y Misceláneos
 
-### 8.1 Autenticación Predictiva de Imágenes en AWS S3
-En cumplimiento de buenas prácticas, se implementa URL firma (Presigned URLs) minimizando tiempos de red para blobs y cargas en sistema.
-- **Solicitar el Punto Restringido Temporal de Subida:** `POST /presignedGalleryUrls`
+### 8.1 Gestión y Carga de Imágenes (Almacenamiento Local / S3 Fallback)
+El sistema soporta almacenamiento desacoplado de AWS. Si se configura `STORAGE_TYPE=local`, los archivos se guardan y sirven localmente desde el servidor Express (carpeta `/uploads`). En caso contrario, se realiza la subida a buckets de AWS S3 mediante URLs firmadas (Presigned URLs).
+- **Solicitar el Punto Restringido de Subida:** `POST /presignedGalleryUrls`
   - **Body:** `{"bucket": "galleries", "filenames": ["archivo-1.jpg"]}`
-- **Lectura Temporal Asignada (Privado):** `GET /showGalleryImage?key=archivo-1.jpg`
+- **Lectura/Acceso de Imágenes:** `GET /showGalleryImage?key=archivo-1.jpg`
 
 ### 8.2 Actualización Paramétrica de Avatares (Imagen)
 - **`POST /imageUpload`**: Almacenamiento base perfil.
-- **`POST /updateProfileImage`** y su réplica **`POST /client/{client_id}/updateProfileImageUrl`**: Para confirmación asíncrona post carga de bucket.
+- **`POST /updateProfileImage`** y su réplica **`POST /client/{client_id}/updateProfileImageUrl`**: Para confirmación asíncrona post carga.
 - **`POST /updateInitiativeImageUrl`**: Referencia atómica de avatar primario de iniciativa.
 
-### 8.3 Correos Transaccionales Amazon SES y Comentarios
+### 8.3 Correos Transaccionales (SMTP / SES Fallback) y Comentarios
 - **Foro en Plataforma (Comentarios):**
   - **Lectura de Foro:** `GET /comments?initiative_id=123`
   - **Envío Formal de Comentario al Servidor:** `POST /comments`
-- **Servicio Interno Eventos de Correo SES:**
-  - **Hito Social Logrado:** `POST /notify-update`
-  - **Ticket Administrativo del Cliente hacia el SaaS:** `POST /notify-support`
+- **Servicio Interno de Notificaciones y Soporte por Correo:**
+  Si se configuran las variables SMTP (`SMTP_HOST`, `SMTP_PORT`, etc.), los correos se envían usando SMTP estándar (Nodemailer). De lo contrario, se realiza un fallback a AWS SES si las credenciales de AWS están presentes.
+  - **Hito Social Logrado (Notificación):** `POST /notify-update`
+  - **Ticket Administrativo de Soporte:** `POST /notify-support`
 
 
 ---
