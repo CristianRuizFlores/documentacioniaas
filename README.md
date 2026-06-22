@@ -1,3 +1,570 @@
+# Documentación Unificada - Impact as a Service (IaaS)
+
+Este repositorio contiene toda la documentación del proyecto unificada en un solo archivo Markdown.
+
+## Índice
+1. [Endpoints de la API](#1-endpoints-de-la-api)
+2. [Documentación Técnica de la API (Word)](#2-documentación-técnica-de-la-api)
+3. [Lineamientos del Developer Portal (Word)](#3-lineamientos-del-developer-portal)
+4. [Resumen de Migración a Express (Word)](#4-resumen-de-migración-a-express)
+5. [Especificación OpenAPI completa (JSON)](#5-especificación-openapi-completa)
+
+---
+
+## 1. Endpoints de la API
+
+
+
+Esta es la guía de integración técnica para el backend de Impact as a Service (IaaS). Este documento detalla el contrato exacto para cada uno de los endpoints disponibles en el sistema, organizados por dominio funcional, e incluye las especificaciones introducidas durante las fases recientes de migración.
+
+## Aspectos Globales de Autenticación
+Salvo excepciones específicas (como webhooks externos), todos los endpoints requieren autenticación mediante un Autorizador de API Gateway (`IaaSAuthorizer`).
+- **Cabecera Requerida:** `x-api-key: <TU_API_KEY>`
+- **Base URL:** Todas las rutas expuestas en este documento se asumen bajo un endpoint base, representado como `<BASE_URL>`.
+
+---
+
+## Índice General
+1. Autenticación (Original Auth)
+2. Gestión de Clientes
+3. Manejo de Iniciativas
+4. Impactos y Metas
+5. Métricas y Analítica (Fases 1 y 2)
+6. Generación de Reportes (Fase 2)
+7. Visualización Pública y Búsqueda (Fase 3)
+8. Archivos, Notificaciones y Misceláneos
+
+---
+
+## 1. Autenticación (Original Auth)
+Nueva arquitectura de inicio de sesión que reemplaza a AWS Cognito, delegando la identidad al proveedor Original Auth.
+
+### 1.1 Iniciar Sesión de Autenticación
+- **Ruta:** `GET /auth/generate_session`
+- **Descripción:** Inicia el flujo de autenticación "Single Sign-On".
+- **Comportamiento Esperado:** Genera un estado local temporal (`session_id` con estado `PENDING`) que el frontend debe usar para redirigir al proveedor de Original Auth.
+- **Ejemplo cURL:**
+  ```bash
+  curl --location --request GET '<BASE_URL>/auth/generate_session'
+  ```
+
+### 1.2 Webhook de Validación (Callback)
+- **Ruta:** `POST /auth/callback`
+- **Descripción:** Endpoint interno consumido exclusivamente por los servidores de Original Auth de forma asíncrona cuando un usuario completa el login.
+- **Comportamiento Esperado:** Valida la firma del proveedor usando una clave secreta interna (`secret_key`), marca la sesión como `VALIDATED` en la base de datos, y provee temporalmente (en el contexto de ejecución) los datos del usuario. De no existir cuenta bajo este correo en la tabla local de Clientes, procede a provisionar una cuenta nueva automáticamente.
+- **Cuerpo de la Petición (Ejemplo):**
+  ```json
+  {
+      "session_id": "uuid-sesion",
+      "user_data": {
+          "email": "usuario@ejemplo.com",
+          "name": "Nombre Usuario"
+      }
+  }
+  ```
+
+### 1.3 Validación Final Frontend
+- **Ruta:** `POST /auth/validate_session`
+- **Descripción:** Confirma del lado del cliente que la sesión ha sido validada exitosamente por el proveedor.
+- **Comportamiento Esperado:** Otorga la respuesta definitiva requerida por el frontend y emite una cookie HTTP-only segura conteniendo el token JWT para uso subsecuente.
+- **Cuerpo de la Petición:**
+  ```json
+  {
+      "session_id": "uuid-sesion"
+  }
+  ```
+- **Ejemplo cURL:**
+  ```bash
+  curl --location --request POST '<BASE_URL>/auth/validate_session' \
+  --header 'Content-Type: application/json' \
+  --data-raw '{ "session_id": "uuid-sesion" }'
+  ```
+
+---
+
+## 2. Gestión de Clientes
+Endpoints destinados a la consulta y actualización de perfiles de organizaciones empresariales o donadores.
+
+### 2.1 Obtener todos los Clientes
+- **Ruta:** `GET /client`
+- **Descripción:** Listado completo de clientes registrados en el sistema.
+- **Ejemplo cURL:**
+  ```bash
+  curl --location --request GET '<BASE_URL>/client' \
+  --header 'x-api-key: <TU_API_KEY>'
+  ```
+
+### 2.2 Consultar Perfil Privado
+- **Ruta:** `GET /client/{client_id}`
+- **Descripción:** Obtiene los datos demográficos y configuraciones internas del cliente proporcionado.
+- **Ejemplo cURL:**
+  ```bash
+  curl --location '<BASE_URL>/client/{client_id}' \
+  --header 'x-api-key: <TU_API_KEY>'
+  ```
+
+### 2.3 Perfil Público mediante Subruta (Slug)
+- **Ruta:** `GET /clients/{slug}`
+- **Descripción:** Realiza una búsqueda mediante la URL amigable (slug) del cliente para el renderizado público web (por ejemplo, misitio.com/empresas/mi-empresa).
+- **Ejemplo cURL:**
+  ```bash
+  curl --location '<BASE_URL>/clients/mi-empresa' \
+  --header 'x-api-key: <TU_API_KEY>'
+  ```
+
+### 2.4 Modificación del Perfil de Cliente
+- **Rutas:** `PATCH /client` (Perfil General) | `PATCH /updateClientSM` (Redes Sociales Exclusivas)
+- **Descripción:** Actualiza de modo parcial o total la información o enlaces sociales del cliente autenticado.
+- **Cuerpo de la Petición (`PATCH /client`):**
+  ```json
+  {
+      "client_id": "id-del-cliente",
+      "name": "Títulos y Nombres",
+      "description": "Explicación biográfica o corporativa"
+  }
+  ```
+- **Ejemplo cURL:**
+  ```bash
+  curl --location --request PATCH '<BASE_URL>/client' \
+  --header 'x-api-key: <TU_API_KEY>' \
+  --header 'Content-Type: application/json' \
+  --data-raw '{
+      "client_id": "123",
+      "name": "Corporación XYZ"
+  }'
+  ```
+
+---
+
+## 3. Manejo de Iniciativas
+Endpoints encargados del registro y modificación de las campañas y proyectos sociales expuestos a los agentes inversores.
+
+### 3.1 Obtener y Filtrar Iniciativas Activas
+- **Ruta:** `GET /initiatives`
+- **Descripción:** Devuelve un arreglo paginado de las iniciativas globales con filtros ejecutados en backend.
+- **Parámetros GET (Query String):**
+  - `search` (string): Búsqueda textual por coincidencia (case-insensitive) en el nombre de la iniciativa.
+  - `category` (string): Busca exactitud literal por categoría de rubro.
+  - `dateFrom`, `dateTo` (ISO Date): Rango temporal para filtrar `creation_date`.
+  - `status` (string, separador por comas): Opciones soportadas son `completed`, `active`, `inProgress`, `recentAdded`, `topInitiatives`.
+  - `page`, `limit` (número): Control de paginación de los registros.
+- **Ejemplo cURL:**
+  ```bash
+  curl --location '<BASE_URL>/initiatives?status=active,completed&limit=20&page=1' \
+  --header 'x-api-key: <TU_API_KEY>'
+  ```
+
+### 3.2 Listar Iniciativas Propias de un Cliente
+- **Ruta:** `GET /initiativesofclient/{client_id}`
+- **Descripción:** Implementa la misma lógica de los filtros de listado descritos anteriormente (3.1), pero limitando su resultado mediante una clave de búsqueda restrictiva (`client_id`).
+- **Ejemplo cURL:**
+  ```bash
+  curl --location '<BASE_URL>/initiativesofclient/{client_id}?status=active' \
+  --header 'x-api-key: <TU_API_KEY>'
+  ```
+
+### 3.3 Consultas Transaccionales Directas
+Estas operaciones realizan búsquedas, mutaciones o borrados atómicos de entidades Iniciativa.
+- **Leer Iniciativa Individual:** `GET /initiatives/{initiative_id}`
+- **Modificar Metadatos:** `PATCH /initiatives` (El documento JSON de la solicitud requiere de `initiative_id` mandatoriamente en su primer nivel).
+- **Borrado Lógico y Físico:** `DELETE /initiatives` (El documento de la solicitud requiere `initiative_id`).
+- **Listar el Árbol de Categorías:** `GET /initiatives/getInitiativeCategoriesOfClient/{client_id}` (Devuelve solo las categorías exactas registradas exitosamente para este cliente, ordenadas de modo alfabético).
+
+---
+
+## 4. Impactos y Metas
+Funcionalidad dedicada a medir métricas de consecución de aportes (Impacts) comparado contra los objetivos pre-solicitados (Needs).
+
+### 4.1 Crear un Objetivo (Need/Goal)
+- **Ruta:** `POST /initiatives/{initiative_id}/needs`
+- **Descripción:** Añade un nuevo nivel de meta (sea monetaria, material, o técnica) vinculándolo a la campaña deseada.
+- **Cuerpo de la Petición:**
+  ```json
+  {
+      "type": "Economic",
+      "amount": 50000,
+      "description": "Meta mínima operativa"
+  }
+  ```
+- **Ejemplo cURL:**
+  ```bash
+  curl --location --request POST '<BASE_URL>/initiatives/{initiative_id}/needs' \
+  --header 'x-api-key: <TU_API_KEY>' \
+  --header 'Content-Type: application/json' \
+  --data-raw '{ "type": "Economic", "amount": 50000, "description": "Detalles" }'
+  ```
+
+### 4.2 Registrar una Contribución (Impact)
+- **Ruta:** `POST /initiatives/{initiative_id}/impacts`
+- **Descripción:** Formaliza el registro del impacto del lado de un usuario.
+- **Cuerpo de la Petición:**
+  ```json
+  {
+      "amount": "500",
+      "type": "Social",
+      "contributor_id": "id-del-contribuyente"
+  }
+  ```
+
+### 4.3 Consultas Transaccionales Tradicionales
+- **GET /impacts/{client_id}:** Lista un extracto crudo de todas las transacciones de un donador.
+- **POST /impacts/totalgiven:** Retorna la métrica absoluta total de cuánto ha entregado en general un contribuyente al día de hoy.
+- **POST /impacts/totalreceived:** Métrica global absoluta correspondiente a la captación neta de la ONG al día de hoy.
+- **GET /needs/{need_id}:** Recuperación independiente del estado individual de cumplimiento de una meta.
+
+---
+
+## 5. Métricas y Analítica (Fases 1 y 2)
+Endpoints de procesamiento avanzado desarrollados para anular y evitar el efecto de redundancia múltiple generada por las llamadas repetidas desde el navegador y reducir consultas secundarias sobre DynamoDB (N+1 queries).
+
+### 5.1 Estado General e Inventario (Dashboard Empresarial)
+- **Ruta:** `GET /clients/{client_id}/metrics/general`
+- **Respuesta Esperada:**
+  ```json
+  {
+      "totalInitiatives": 25,
+      "activeInitiatives": 10,
+      "completedInitiatives": 8,
+      "pendingInitiatives": 7
+  }
+  ```
+- **Ejemplo cURL:**
+  ```bash
+  curl --location '<BASE_URL>/clients/{client_id}/metrics/general' \
+  --header 'x-api-key: <TU_API_KEY>'
+  ```
+
+### 5.2 Agregación de Series de Tiempo (Gráficos)
+- **Ruta:** `GET /initiatives/{initiative_id}/impacts/aggregated`
+- **Parámetros Requeridos:** `period` (Valores permitidos `weekly`, `monthly`, `yearly`). Variables de año (`year`) son opcionales y usarán el presente en caso de omitirse.
+- **Respuesta Esperada:** Listas paralelas con la abscisa (labels) y ordenada (series). Ideal para inyección directa a componentes React Recharts o ApexCharts.
+
+### 5.3 Proporciones de Distribución
+- **Distribución de Categorías:** `GET /initiatives/{initiative_id}/impacts/by-type` (Entregando un objeto estandarizado y el tipo exacto agrupado como `Social` o `Economic`).
+- **Estado de Objetivos Consolidado:** `GET /initiatives/{initiative_id}/goals/progress` (Computa la operación interna: `impacto_acumulado / monto_objetivo * 100`).
+
+### 5.4 Consolidado de Métrica de Iniciativa Completa
+- **Ruta:** `GET /initiatives/{initiative_id}/metrics/complete`
+- **Descripción:** Resuelve los datos calculados e inyecta algoritmos para determinar la 'salud' del proyecto: progreso de fechas restantes (`daysRemaining`), diferencial de velocidad contra el inicio (`progressStatus`), así como su puntuación técnica (`efficiencyRating`). Múltiples requerimientos paralelos resueltos por una instancia única de Lambda.
+
+### 5.5 Analíticas Auxiliares
+- **Actividad de Impacto:** `GET /initiatives/{initiative_id}/activity?period=week` (Transacciones recientes de los últimos siete o treinta días).
+- **Métricas Retrospectivas del Cliente:** `GET /clients/{client_id}/impacts/stats?days=60`
+- **Tabla de Contribuyentes Clasificados:** `GET /initiatives/{initiative_id}/contributors/detailed?limit=5` (Entrega las identidades asignadas a niveles jerárquicos monetario o por recurrencia).
+
+---
+
+## 6. Generación de Reportes (Fase 2)
+Endpoints asíncronos orientados a auditar documentos, reportes PDF e imprimir memorias sobre campañas de modo sistemático.
+
+### 6.1 Estadísticas Concatenadas (Múltiples Campañas)
+- **Ruta:** `POST /reports/stats`
+- **Cuerpo de la Petición:**
+  ```json
+  {
+      "initiative_ids": ["init1", "init2", "init3"]
+  }
+  ```
+- **Respuesta Esperada:** Devolverá un bloque de total consolidado de resumen (summary) y métricas segmentadas del tipo (types), para cada iniciativa solicitada.
+
+### 6.2 Desencadenar la Impresión a Archivo S3 (Reporte Formal)
+- **Ruta:** `POST /generateInitiativeReport`
+- **Descripción:** Lanza la función asíncrona dedicada que compila las métricas del proyecto y las exporta a un documento PDF.
+- **Cuerpo de la Petición:**
+  ```json
+  {
+      "initiative_id": "id-iniciativa",
+      "client_id": "id-del-cliente"
+  }
+  ```
+- **Ejemplo cURL:**
+  ```bash
+  curl --location --request POST '<BASE_URL>/generateInitiativeReport' \
+  --header 'x-api-key: <TU_API_KEY>' \
+  --header 'Content-Type: application/json' \
+  --data-raw '{ ... }'
+  ```
+
+---
+
+## 7. Visualización Pública y Búsqueda (Fase 3)
+Funciones estandarizadas para el ambiente web público sin credenciales explícitas preexistentes pero optimizadas al milisegundo de respuesta.
+
+### 7.1 Panel Transparente Público de Relación de Proyectos
+- **Ruta:** `GET /users/{user_id}/initiatives/participated?limit=10`
+- **Descripción:** Lista y analiza automáticamente los historiales relacionales del usuario con la causa respectiva; devolviendo el historial consolidado con indicadores de desempeño alfabéticos (trend: `"up"` | `"down"`).
+
+### 7.2 Uso Consolidado de Panel de Donante Público
+- **Ruta:** `GET /users/{user_id}/public-profile/stats`
+- **Descripción:** Retorna el uso del último mes y el histórico del año por semanas aplicables para un donador expuesto, de modo completamente empaquetado y resuelto.
+
+### 7.3 Búsqueda Global Agrupada (Unified Search)
+- **Ruta:** `GET /search`
+- **Parámetros Requeridos:** `q=` (Texto)
+- **Parámetros Opcionales:** `type=` (`all` por defecto, pudiendo restringirse explícitamente a `clients` o a `initiatives`). El límite general está delimitado a diez elementos por cada respuesta particular.
+- **Respuesta Esperada:**
+  ```json
+  {
+      "clients": [ { "id": "...", "name": "..." } ],
+      "initiatives": [ { "id": "...", "name": "..." } ],
+      "totalResults": 2
+  }
+  ```
+
+---
+
+## 8. Archivos, Notificaciones y Misceláneos
+
+### 8.1 Autenticación Predictiva de Imágenes en AWS S3
+En cumplimiento de buenas prácticas, se implementa URL firma (Presigned URLs) minimizando tiempos de red para blobs y cargas en sistema.
+- **Solicitar el Punto Restringido Temporal de Subida:** `POST /presignedGalleryUrls`
+  - **Body:** `{"bucket": "galleries", "filenames": ["archivo-1.jpg"]}`
+- **Lectura Temporal Asignada (Privado):** `GET /showGalleryImage?key=archivo-1.jpg`
+
+### 8.2 Actualización Paramétrica de Avatares (Imagen)
+- **`POST /imageUpload`**: Almacenamiento base perfil.
+- **`POST /updateProfileImage`** y su réplica **`POST /client/{client_id}/updateProfileImageUrl`**: Para confirmación asíncrona post carga de bucket.
+- **`POST /updateInitiativeImageUrl`**: Referencia atómica de avatar primario de iniciativa.
+
+### 8.3 Correos Transaccionales Amazon SES y Comentarios
+- **Foro en Plataforma (Comentarios):**
+  - **Lectura de Foro:** `GET /comments?initiative_id=123`
+  - **Envío Formal de Comentario al Servidor:** `POST /comments`
+- **Servicio Interno Eventos de Correo SES:**
+  - **Hito Social Logrado:** `POST /notify-update`
+  - **Ticket Administrativo del Cliente hacia el SaaS:** `POST /notify-support`
+
+
+---
+
+## 2. Documentación Técnica de la API
+
+__CATÁLOGO TÉCNICO Y RUTAS DE NAVEGACIÓN__
+
+__Endpoints y Rutas: API, Motor y Frontend  
+Sistema IAAS__
+
+# 1\. Endpoints de la API REST \(API\_IaaS\)
+
+A continuación se detallan todos los endpoints expuestos por la API REST principal, la cual sirve como núcleo de datos PostgreSQL y lógica de negocio para la plataforma\.
+
+- __\[GET\] /auth/generate\_session : __Generar una sesión de inicio temporal para Original Auth* \(Auth\)*
+- __\[POST\] /auth/callback : __Webhook de Original Auth para validar la sesión y crear cliente* \(Auth\)*
+- __\[POST\] /auth/validate\_session : __Validar la sesión y emitir JWT seguro en Cookies* \(Auth\)*
+- __\[GET\] /helloapi : __Ping para validar el estado de la API* \(System\)*
+- __\[POST\] /client : __Registrar un nuevo cliente en el sistema* \(Clients\)*
+- __\[GET\] /client : __Obtener el listado de todos los clientes* \(Clients\)*
+- __\[PATCH\] /client : __Actualizar información parcial del cliente* \(Clients\)*
+- __\[GET\] /client/\{client\_id\} : __Obtener información de un cliente por su ID* \(Clients\)*
+- __\[DELETE\] /client/\{client\_id\} : __Eliminar de forma permanente un cliente y sus datos* \(Clients\)*
+- __\[GET\] /clients/\{slug\} : __Obtener datos del cliente a través de su slug único de URL* \(Clients\)*
+- __\[PATCH\] /updateClientSM : __Actualizar exclusivamente las redes sociales de un cliente* \(Clients\)*
+- __\[GET\] /clients/\{client\_id\}/needs : __Obtener las necesidades o metas de un cliente* \(Clients\)*
+- __\[POST\] /initiatives : __Crear una nueva iniciativa social o ambiental* \(Initiatives\)*
+- __\[GET\] /initiatives : __Obtener todas las iniciativas registradas* \(Initiatives\)*
+- __\[GET\] /initiatives/\{initiative\_id\} : __Obtener una iniciativa por su ID* \(Initiatives\)*
+- __\[DELETE\] /initiatives : __Eliminar una iniciativa indicando su ID en query string* \(Initiatives\)*
+- __\[GET\] /initiativesofclient/\{client\_id\} : __Obtener las iniciativas de un cliente específico* \(Initiatives\)*
+- __\[PATCH\] /initiatives : __Actualizar información de una iniciativa* \(Initiatives\)*
+- __\[GET\] /initiatives/getInitiativeCategoriesOfClient/\{client\_id\} : __Categorías de iniciativas de un cliente con sus impactos* \(Initiatives\)*
+- __\[GET\] /initiatives/Contributors/\{initiative\_id\} : __Obtener la lista de donadores únicos de una iniciativa* \(Initiatives\)*
+- __\[POST\] /initiatives/\{initiative\_id\}/impacts : __Agregar una aportación de impacto a una iniciativa* \(Impacts\)*
+- __\[GET\] /initiatives/\{initiative\_id\}/impacts : __Obtener impactos asociados a una iniciativa* \(Impacts\)*
+- __\[GET\] /impacts/\{client\_id\} : __Obtener impactos asociados a un cliente* \(Impacts\)*
+- __\[POST\] /impacts : __Consultar impactos por iniciativa y rango de fechas* \(Impacts\)*
+- __\[POST\] /impacts/totalgiven : __Obtener el total de impacto aportado por un donador* \(Impacts\)*
+- __\[POST\] /impacts/totalreceived : __Obtener el total de impacto recibido por un cliente* \(Impacts\)*
+- __\[GET\] /impacts/Participations/\{need\_id\} : __Obtener participaciones de impacto vinculadas a una meta/necesidad* \(Impacts\)*
+- __\[GET\] /initiatives/\{initiative\_id\}/activity : __Actividad de impactos por periodos \(semana/mes/año\)* \(Impacts\)*
+- __\[GET\] /initiatives/\{initiative\_id\}/contributors/detailed : __Listado detallado de contribuidores con información de perfil* \(Impacts\)*
+- __\[POST\] /initiatives/\{initiative\_id\}/metrics : __Registrar un nuevo indicador de métrica para la iniciativa* \(Metrics\)*
+- __\[GET\] /initiatives/\{initiative\_id\}/metrics : __Obtener las métricas de una iniciativa* \(Metrics\)*
+- __\[GET\] /clients/\{client\_id\}/metrics/general : __Métricas generales \(iniciativas totales, activas, completadas\)* \(Metrics\)*
+- __\[GET\] /initiatives/\{initiative\_id\}/metrics/complete : __Métricas consolidadas \(burndown chart, velocidad, eficiencia\)* \(Metrics\)*
+- __\[GET\] /initiatives/\{initiative\_id\}/goals/progress : __Progreso de metas de la iniciativa* \(Metrics\)*
+- __\[POST\] /imageUpload : __Subir una imagen base64 \(Foto de perfil\)* \(Images\)*
+- __\[POST\] /updateProfileImage : __Actualizar la URL de la imagen de perfil de un cliente* \(Images\)*
+- __\[POST\] /updateInitiativeImageUrl : __Actualizar la imagen principal de una iniciativa* \(Images\)*
+- __\[POST\] /presignedGalleryUrls : __Generar URLs firmadas para subir múltiples archivos a la galería S3* \(Images\)*
+- __\[GET\] /showGalleryImage : __Listar imágenes de la galería asociadas a una entidad* \(Images\)*
+- __\[POST\] /reports/stats : __Obtener estadísticas agregadas para generación de reportes* \(Reports\)*
+- __\[GET\] /clients/\{client\_id\}/esg\-reports : __Obtener reportes ESG y de ImpactIndex del cliente* \(Reports\)*
+- __\[POST\] /comments : __Registrar un comentario en una iniciativa* \(Comments\)*
+- __\[GET\] /comments : __Obtener comentarios ordenados descendentemente por fecha* \(Comments\)*
+
+# 2\. Endpoints del Motor de Evaluación \(motor\_IaaS\)
+
+A continuación se listan los endpoints del Motor RAG y Evaluación de Reportes, el cual lee y procesa los documentos ESG en formato PDF y calcula el ImpactIndex mediante LLMs\.
+
+- __\[GET\] /api/reports : __Obtener la lista de todos los reportes ESG y dimensiones calculadas
+- __\[GET\] /api/ranking : __Obtener el ranking global de reportes calculados \(ImpactIndex, AlternativeIndex\)
+- __\[GET\] /api/report/:slug : __Obtener la estructura de evaluación de un reporte filtrado por slug \(y opcional por año\)
+- __\[POST\] /api/process\-report : __Subir y procesar archivos PDF, extraer textos corporativos y calcular puntuaciones ESG
+- __\[DELETE\] /api/report/:slug : __Eliminar un reporte evaluado por su slug \(y opcionalmente por año\)
+
+# 3\. Rutas de Navegación Frontend \(front\-v2\)
+
+Rutas del enrutador de cliente \(React Router DOM\) en el Frontend que definen las vistas y páginas del portal del cliente\.
+
+- __/landing/\* : __Página pública de bienvenida \(Home\)
+- __/auth/signin : __Formulario de inicio de sesión de usuario
+- __/auth/logout : __Acción de cierre de sesión y destrucción de sesión de usuario
+- __/auth/return : __Ruta de retorno desde Original Auth para procesar la respuesta
+- __/auth/error : __Página de visualización de errores durante el login
+- __/auth/complete\-profile : __Página para complementar información de nuevos usuarios
+- __/admin/dashboard : __Panel de control principal \(Dashboard general de métricas\)
+- __/admin/initiatives : __Panel de visualización y lista de iniciativas
+- __/admin/newinitiative : __Formulario de creación de una nueva iniciativa de desarrollo
+- __/admin/metrics : __Vista general de métricas acumuladas del proyecto
+- __/admin/reports : __Sección de reportes ESG cargados, evaluación y exportación en PDF
+- __/admin/needs : __Panel de administración y estado de necesidades/metas
+- __/admin/newneed : __Formulario de registro de una meta/necesidad
+- __/admin/profile : __Vista detallada del perfil corporativo de la organización
+- __/admin/edit\-profile : __Edición de datos de perfil y redes sociales de la empresa
+- __/admin/my\-initiative/:id : __Panel interactivo con la ficha detallada de una iniciativa específica
+- __/admin/search : __Búsqueda y visualización global de clientes e iniciativas
+
+
+
+---
+
+## 3. Lineamientos del Developer Portal
+
+__COMUNICADO OFICIAL__
+
+__Lineamientos de Developer Portals e Integración de OpenAPI  
+Sistema IAAS__
+
+__DE:__
+
+Líder de Integración y Plataforma Docs \(Sistema IAAS\)
+
+__PARA:__
+
+Líderes de Proyecto y Equipos de Desarrollo de Backend/Frontend
+
+__FECHA:__
+
+19 de June de 2026
+
+__ASUNTO:__
+
+Especificaciones y requerimientos para la publicación de Developer Portals
+
+# __1\. Contexto e Implementación__
+
+Por medio del presente comunicado se comparten los lineamientos y especificaciones técnicas para la creación y publicación de los Developer Portals correspondientes a los proyectos bajo el ecosistema IAAS\.
+
+*Nota del proyecto:  
+La implementación técnica de cada portal es ágil y directa\. No obstante, el esfuerzo principal requerido por parte de los equipos de desarrollo radica en complementar la documentación existente con información funcional detallada, descripciones explicativas y ejemplos claros para cada uno de los endpoints que se integren\.*
+
+# __2\. Clasificación de Documentación Requerida__
+
+Para garantizar un estándar óptimo y ordenado de la documentación expuesta, los equipos deberán separar el contenido según los siguientes lineamientos oficiales:
+
+__Documentación Interna  
+\(Obligatoria para todos los proyectos\)__
+
+__Documentación Orientada a Usuarios  
+\(Opcional\)__
+
+__Objetivo: Uso exclusivo para administración y desarrollo interno\.__
+
+- Debe incluir todos los endpoints del backend, sin excepciones\.
+- Detallar minuciosamente parámetros, esquemas de respuesta, permisos y esquemas de base de datos\.
+- Responder con precisión: ¿Qué hace el endpoint? y ¿Para qué se usa?
+- Proporcionar ejemplos reales y funcionales de llamadas y retornos\.
+- Restringir el acceso estrictamente a usuarios internos autorizados, alojándose de forma segura e interna en el proyecto\.
+
+__Objetivo: Documentación apta para exposición pública o de clientes\.__
+
+- Aplica solo para proyectos que requieran exponer APIs públicamente o a terceros\.
+- Incluir únicamente endpoints de consulta y operaciones seguras para el usuario final\.
+- Excluir explícitamente endpoints administrativos, críticos, destructivos o que comprometan la seguridad del sistema\.
+- Controlar el acceso \(público o restringido\) según las necesidades de negocio del proyecto, situándose en una ruta controlada\.
+
+# __3\. Proceso de Integración a la Plataforma Docs__
+
+Para realizar la integración del portal, los líderes y desarrolladores deben seguir estos pasos:
+
+__1\. Publicación de OpenAPI: __Asegurar que el proyecto exponga de manera pública o privada el archivo JSON correspondiente bajo el estándar OpenAPI, comúnmente denominado openapi\.json\.
+
+__2\. Envío de la URL: __Una vez finalizada y enriquecida la especificación, los equipos de desarrollo deberán proveer la URL directa del archivo openapi\.json\.
+
+__3\. Consolidación en Docs: __La plataforma central de Docs utilizará dicho archivo para integrarlo dinámicamente y gestionar la visibilidad de los endpoints según el tipo de documentación \(interna o usuario\)\.
+
+# __4\. Canales de Soporte y Dudas__
+
+*Soporte y Consultas:  
+Si los equipos técnicos requieren apoyo o surgen dudas sobre los presentes requerimientos, se solicita utilizar los canales habituales de comunicación \(chat oficial del proyecto\)\. De ser necesario, se puede coordinar y agendar una sesión grupal de alineación técnica\.*
+
+
+
+---
+
+## 4. Resumen de Migración a Express
+
+__Reporte de Migración de AWS a Express\.js__
+
+*Resumen Ejecutivo de Cambios y Verificación \(Fase 1 y Fase 2\) — API\_IaaS*
+
+Este documento detalla la migración de la API de Impact Index \(API\_IaaS\) desde la arquitectura original en AWS Lambda \(Serverless Framework\) hacia un servidor continuo e independiente basado en Express\.js\. El objetivo principal es permitir la ejecución local y su contenedorización para despliegue en Easypanel, eliminando por completo la dependencia obligatoria de la infraestructura de AWS\.
+
+__1\. Objetivos del Cambio__
+
+- Migrar la arquitectura de ejecución de Lambdas Serverless a un servidor Express\.js estándar\.
+- Desacoplar los servicios propietarios de AWS \(S3 para imágenes, SES para correos, Secrets Manager para llaves criptográficas\)\.
+- Implementar un 'Modo Dual' que priorice el almacenamiento y correo locales \(disco/SMTP\) con fallbacks automáticos a AWS si se configuran\.
+- Garantizar el 100% de compatibilidad con las pruebas unitarias y de integración existentes en el proyecto\.
+
+__2\. Cambios Implementados__
+
+__Servidor de Express \(server\.ts & expressAdapter\.ts\): __Creado el archivo del servidor Express que mapea las más de 60 rutas del backend\. Se implementó un adaptador 'lambdaAdapter' que encapsula los handlers originales, evitando tener que reescribir la lógica de negocio\. También se implementó 'expressAuthMiddleware' para replicar la autenticación JWT y API Keys de AWS API Gateway\.
+
+__Envío de Correo Independiente \(mailer\.ts\): __Creada una utilidad de correo basada en Nodemailer\. Si se configura SMTP\_HOST en el entorno, los correos se envían usando SMTP estándar\. En caso contrario, se realiza un fallback automático a AWS SES\.
+
+__Almacenamiento Local de Archivos \(storage\.ts\): __Reemplazado el SDK directo de S3 por una utilidad de almacenamiento\. En modo local \(STORAGE\_TYPE=local\), los reportes e imágenes se guardan y leen del disco local \(carpeta /uploads\)\. Se crearon endpoints en Express para simular la subida directa de archivos \(PUT /upload\-local/:client\_id/:filename\) y servir estáticos de forma transparente\.
+
+__Llaves Criptográficas sin AWS Secrets Manager: __Modificada la lógica de descifrado en cryptoUtils\.ts e IaaSAuthorizer\.ts para leer directamente 'AES\_SECRET\_KEY' desde las variables de entorno, evitando peticiones HTTPS externas a AWS\.
+
+__Dockerización del Servidor \(Dockerfile\): __Creado un Dockerfile multi\-etapa optimizado que compila TypeScript y expone el servidor Express en el puerto 3005 para su fácil despliegue en Easypanel\.
+
+__3\. Resultados de Pruebas y Verificación__
+
+- Pruebas Unitarias Exitosas: Ejecutadas las 10 suites de pruebas \(74 pruebas individuales\) y todas pasaron satisfactoriamente \(100% OK\), incluyendo las suites modificadas de desacoplamiento de AWS\.
+- Prueba de Integración Local Completa: Utilizando una base de datos de desarrollo \(Supabase\) y el almacenamiento local configurado, el script 'test\-api\-local\.js' validó satisfactoriamente todo el flujo:  
+   a\) Lectura y escritura de clientes en base de datos PostgreSQL\.  
+   b\) Subida base64 de imagen de perfil al servidor local\.  
+   c\) Acceso estático y descarga de la imagen desde el servidor \(/uploads\)\.  
+   d\) Generación de firmas de subida de galería y carga PUT binaria al servidor\.  
+   e\) Listado correcto de imágenes en la galería local\.
+
+__4\. Configuración Requerida en Easypanel \(Variables de Entorno\)__
+
+__DATABASE\_URL: __Cadena de conexión de PostgreSQL en Easypanel\.
+
+__STORAGE\_TYPE: __Configurar como 'local' para usar almacenamiento en disco\.
+
+__AES\_SECRET\_KEY: __Clave de 32 caracteres para el descifrado heredado \(Legacy\) de API Keys\.
+
+__profileImageBucket: __Configurar como 'bucket\-profile\-images\-iaas'\.
+
+__PORT: __Puerto para escuchar peticiones en el contenedor \(por defecto 3005\)\.
+
+__SMTP\_HOST, SMTP\_PORT, SMTP\_USER, SMTP\_PASS: __Credenciales de correo electrónico SMTP \(opcional, reemplaza a AWS SES\)\.
+
+
+
+---
+
+## 5. Especificación OpenAPI completa
+
+A continuación se muestra la especificación OpenAPI (Swagger) completa del backend en formato JSON.
+
+<details>
+<summary>🔍 Hacer clic aquí para expandir / contraer el JSON completo</summary>
+
+```json
 {
   "openapi": "3.0.3",
   "info": {
@@ -6193,3 +6760,6 @@
     }
   }
 }
+```
+
+</details>
