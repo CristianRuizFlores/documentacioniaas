@@ -7,7 +7,8 @@ Este repositorio contiene toda la documentación del proyecto unificada en un so
 2. [Documentación Técnica de la API (Word)](#2-documentación-técnica-de-la-api)
 3. [Lineamientos del Developer Portal (Word)](#3-lineamientos-del-developer-portal)
 4. [Resumen de Migración a Express (Word)](#4-resumen-de-migración-a-express)
-5. [Especificación OpenAPI completa (JSON)](#5-especificación-openapi-completa)
+5. [Documentación Técnica del Backend (motor_IaaS)](#5-documentación-técnica-del-backend-motor_iaas)
+6. [Especificación OpenAPI completa (JSON)](#6-especificación-openapi-completa)
 
 ---
 
@@ -558,7 +559,288 @@ __SMTP\_HOST, SMTP\_PORT, SMTP\_USER, SMTP\_PASS: __Credenciales de correo elect
 
 ---
 
-## 5. Especificación OpenAPI completa
+## 5. Documentación Técnica del Backend (motor_IaaS)
+
+Esta documentación proporciona un análisis técnico profundo del diseño de software, arquitectura de datos, flujos de procesamiento RAG, el motor de inteligencia artificial y los algoritmos matemáticos implementados en el repositorio `motor_IaaS` (ImpactoSocial).
+
+---
+
+### 5.1 Arquitectura y Stack Tecnológico
+
+El backend está estructurado como una API REST robusta optimizada para operaciones intensivas de análisis de datos no estructurados mediante Inteligencia Artificial y bases de datos vectoriales.
+
+*   **Entorno de Ejecución:** Node.js v20+ con soporte nativo de **TypeScript** mediante Express.js.
+*   **Base de Datos Relacional y Vectorial:** PostgreSQL enriquecido con la extensión **pgvector** para el soporte de operaciones geométricas en espacios vectoriales (búsqueda de vecinos más cercanos mediante similitud coseno).
+*   **Capa de Persistencia:** Drizzle ORM que garantiza tipado estático seguro y sincronización ágil de migraciones mediante `drizzle-kit`.
+*   **Orquestación de IA y RAG:** Integración directa con los modelos de lenguaje de OpenAI (`gpt-4o` y `gpt-4o-mini`) y uso de embeddings semánticos (`text-embedding-3-small` de 1536 dimensiones) orquestados mediante LangChain.
+*   **Procesamiento de Documentos:** Ingesta multiformato mediante `pdf-parse`, `officeparser`, `mammoth` y fallback con `any-text`.
+*   **Almacenamiento en la Nube:** Integración mediante peticiones firmadas (HMAC SHA-256) con el servicio externo **Media-as-a-Service (MediaAAS)** para la persistencia física de reportes y metadatos en depósitos de AWS S3.
+
+---
+
+### 5.2 Diagrama de Flujo del Pipeline Ingesta-RAG-Evaluación
+
+El siguiente diagrama detalla cómo se procesa un reporte corporativo desde su subida hasta la persistencia de las métricas ESG calculadas y la posterior purga de vectores temporales para garantizar la soberanía de los datos:
+
+```mermaid
+graph TD
+    A[Carga de Reporte por Express /api/process-report] --> B[Generación de Hash MD5 del Archivo]
+    B --> C{¿Existe Hash en BD o Caché?}
+    C -- Sí (Hit de Caché) --> D[Retornar Reporte Persistido Inmediatamente]
+    C -- No (Miss de Caché) --> E[Extracción de Metadatos con GPT-4o-mini]
+    E --> F[Subir Documento a Media-as-a-Service AWS S3]
+    F --> G[Verificación / Registro de Cliente UUID en Postgres]
+    G --> H[Segmentación en Chunks con Overlap de LangChain]
+    H --> I[Vectorización con text-embedding-3-small]
+    I --> J[Persistencia en Tabla chunks de pgvector]
+    J --> K[Búsqueda Semántica Coseno por Dimensión ESG]
+    K --> L[Evaluación Estructurada Zod con GPT-4o]
+    L --> M[Cálculo de Índices con ImpactCalculator]
+    M --> N[Generación de Resumen Ejecutivo con GPT-4o]
+    N --> O[Guardar en Tabla reports y Caché JSON]
+    O --> P[Purga de Vectores y Documento Temporal en chunks/documents]
+    P --> Q[Retornar Reporte Completo Calculado]
+```
+
+---
+
+### 5.3 Modelo de Datos (Drizzle Schema)
+
+La base de datos se modela bajo una arquitectura híbrida relacional/vectorial que sirve tanto a la lógica transaccional de la API de IaaS (donaciones, iniciativas, clientes) como al motor analítico de reportes ESG.
+
+```mermaid
+erDiagram
+    clients ||--o{ reports : "evalua"
+    clients ||--o{ initiatives : "registra"
+    clients ||--o{ api_keys : "posee"
+    clients ||--o{ sessions : "autentica"
+    initiatives ||--o{ needs : "requiere"
+    initiatives ||--o{ impacts : "genera"
+    initiatives ||--o{ comments : "recibe"
+    needs ||--o{ impacts : "cubre"
+    documents ||--o{ chunks : "se fragmenta en"
+```
+
+#### Detalle de las Tablas Principales
+
+*   `documents`: Almacena el texto crudo unificado de los archivos subidos para auditoría rápida.
+*   `chunks`: Fragmentos de texto generados para la búsqueda semántica. Incluye la columna `embedding` mapeada con el tipo personalizado `vector(1536)` de pgvector.
+*   `reports`: Almacena los resultados consolidados de las auditorías ESG. El campo `report_data` es de tipo `JSONB` y guarda la estructura completa de calificaciones y evidencias. Posee una restricción única compuesta (`slug_year_idx`) para evitar duplicidad de reportes de una organización en el mismo periodo anual.
+*   `clients`: Registro maestro de las organizaciones clientes de IaaS.
+*   `initiatives`: Proyectos e iniciativas comunitarias de impacto impulsadas por un cliente.
+*   `needs`: Necesidades operativas de insumos o recursos financieros vinculados a una iniciativa.
+*   `impacts`: Donaciones o contribuciones directas recibidas por donantes para subsanar necesidades.
+*   `comments`: Muro social e interactivo de retroalimentación en iniciativas.
+*   `sessions`: Tokens y estados de autenticación mediante el webhook original.
+*   `api_keys`: Credenciales API que autorizan el consumo del motor y del ecosistema.
+
+---
+
+### 5.4 Pipeline de Ingesta y Vectorización
+
+El endpoint `/api/process-report` procesa los archivos mediante los siguientes pasos técnicos:
+
+1.  **Detección de Extensiones:** Valida la estructura mediante extensiones de archivo permitidas (`.pdf`, `.docx`, `.doc`, `.txt`, `.md`, `.xlsx`, `.xls`, `.pptx`, `.ppt`).
+2.  **Seguridad y Deduplicación Dinámica:** Calcula el hash MD5 de los binarios para verificar si el archivo ya fue evaluado, sirviendo los datos desde caché si se encuentra una coincidencia.
+3.  **Extracción de Identidad Corporativa (GPT-4o-mini):** Mediante análisis semántico de los primeros 3000 caracteres, identifica:
+    *   Nombre oficial de la organización.
+    *   Año explícito del reporte (`reportYear`).
+    *   Paleta de color corporativo (`primaryColor`).
+    *   Dominio institucional.
+4.  **Almacenamiento Persistente en MediaAAS:** Transmite el búfer binario a AWS S3 a través de MediaAAS mediante autenticación HMAC SHA-256.
+5.  **Chunking Textual:** Divide el texto completo en fragmentos lógicos mediante el `RecursiveCharacterTextSplitter` con un `chunkSize` de `2500` caracteres y un `chunkOverlap` de `300` caracteres para asegurar la continuidad del contexto.
+6.  **Indexación Vectorial y Purgado:** Los fragmentos se convierten en vectores en `VectorStore` usando `text-embedding-3-small`. Una vez completado el flujo de consultas RAG de la evaluación, todos los vectores correspondientes al documento se **eliminan físicamente** de la base de datos para proteger la privacidad e integridad intelectual de la documentación del cliente, manteniendo solo el resultado agregado en `reports`.
+
+---
+
+### 5.5 El Motor RAG y Framework de Evaluación LLM
+
+El motor evalúa a la organización sobre siete dimensiones estratégicas basadas en la taxonomía de **impacto.social**:
+
+1.  **Social:** Iniciativas Comunitarias y Bienestar Humano.
+2.  **Ambiental:** Sostenibilidad, Reforestación y Protección Ecológica.
+3.  **Cultural:** Preservación Artística, Histórica y Cultural.
+4.  **Performance:** Adquisición de Usuarios y Donaciones Activas.
+5.  **Colaboración:** Participación Sectorial de Personas, Empresas u ONGs.
+6.  **Económico:** Impacto Económico y Desarrollo Financiero.
+7.  **Gobernanza:** Gobernanza Corporativa, Transparencia y Ética.
+
+#### Búsqueda Semántica Coseno (pgvector)
+Para cada una de las 7 dimensiones, el motor realiza una búsqueda de vecindad semántica (`similaritySearch`) en la tabla `chunks` limitando la recuperación a los **8 fragmentos** con menor distancia angular (mayor similitud). El operador utilizado en SQL a través de Drizzle es:
+
+```sql
+SELECT id, content, (1 - (chunks.embedding <=> [queryVector]::vector)) AS similarity
+FROM chunks
+WHERE document_id = docId
+ORDER BY chunks.embedding <=> [queryVector]::vector
+LIMIT 8;
+```
+
+Los fragmentos resultantes son ordenados cronológicamente por su `id` (manteniendo el hilo de lectura del reporte original) y se inyectan en el prompt del evaluador LLM.
+
+#### Evaluación Estructurada (OpenAI Structured Outputs)
+El backend utiliza la funcionalidad de **Structured Outputs** de OpenAI forzando al modelo a validar y estructurar su respuesta conforme al esquema Zod `EvaluationResultSchema`. 
+
+```typescript
+const EvaluationResultSchema = z.object({
+  evaluations: z.array(z.object({
+    metricName: z.string(),
+    dimension: z.enum(['social', 'ambiental', 'cultural', 'economico', 'gobernanza', 'performance', 'colaboracion', 'otro']),
+    materialidad: z.enum(['critico', 'alto', 'medio', 'bajo']),
+    calidadEvidencia: z.array(z.enum(['fuente_identificable', 'fecha_definida', 'unidad_clara', 'metodologia_descrita'])),
+    desempeno: z.enum(['supera_meta', 'cumple_meta', 'mejora', 'sin_cambio', 'empeora']),
+    contribucion: z.enum(['directa', 'alta_influencia', 'indirecta', 'no_atribuible']),
+    alcance: z.object({
+      impactados: z.number().nullable(),
+      totalRelevante: z.number().nullable()
+    }),
+    profundidad: z.enum(['transformacional', 'alto', 'medio', 'bajo']),
+    duracion: z.enum(['permanente', 'largo_plazo', 'medio_plazo', 'puntual']),
+    riesgo: z.enum(['muy_bajo', 'bajo', 'medio', 'alto', 'muy_alto']),
+    estandaresAsociados: z.array(z.string()),
+    reasoning: z.string(), // Texto narrativo estructurado (Análisis, Evidencia y Conclusión)
+    citaOriginal: z.string(),
+    evidenceIds: z.array(z.number()) // Índices del bloque RAG inyectado
+  }))
+});
+```
+
+*   **Regla Antifraude:** La IA tiene estrictamente prohibido realizar cálculos matemáticos agregados de puntuación finales ("La IA evalúa, el Backend calcula"). 
+*   **Mapeo de Estándares:** Los estándares detectados por el LLM se contrastan y normalizan mediante la clase `NormativeMapper` contra un catálogo maestro validado (GRI, SASB, ODS) para mitigar falsas clasificaciones.
+
+---
+
+### 5.6 Algoritmo de Calificación Multidimensional (ImpactCalculator)
+
+Una vez que el LLM genera los criterios cualitativos estructurados, la clase `ImpactCalculator` procesa las matrices de calificación cuantitativa:
+
+#### Matrices de Calificación Base
+
+```javascript
+const SCORING_MATRICES = {
+  materialidad: { critico: 100, alto: 80, medio: 55, bajo: 20 },
+  desempeno:    { supera_meta: 100, cumple_meta: 80, mejora: 60, sin_cambio: 40, empeora: 15 },
+  contribucion: { directa: 100, alta_influencia: 80, indirecta: 55, no_atribuible: 20 },
+  profundidad:  { transformacional: 100, alto: 80, medio: 55, bajo: 20 },
+  duracion:     { permanente: 100, largo_plazo: 80, medio_plazo: 55, puntual: 20 },
+  riesgo:       { muy_bajo: 5, bajo: 20, medio: 45, alto: 70, muy_alto: 90 }
+};
+
+const EVIDENCE_SCORES = {
+  fuente_identificable: 25,
+  fecha_definida:       25,
+  unidad_clara:         25,
+  metodologia_descrita: 25
+};
+```
+
+#### Fórmulas Matemáticas
+
+##### 1. Calificación del Indicador (Level 1 Score)
+Para cada métrica o indicador evaluado:
+
+*   **Calidad de la Evidencia ($EQ_i$):** Suma directa de los atributos presentes de la evidencia.
+    $$EQ_i = \sum \text{EVIDENCE\_SCORES[attr]} \quad (\text{Max } 100)$$
+
+*   **Puntaje de Alcance ($A_i$):** Se calcula únicamente si existen datos numéricos explícitos.
+    $$A_i = \begin{cases} 
+      \min\left(\frac{\text{impactados}}{\text{totalRelevante}} \times 100, 100\right) & \text{si } \text{totalRelevante} > 0 \\ 
+      \min(\text{impactados}, 100) & \text{si } \text{totalRelevante} \le 0 
+    \end{cases}$$
+
+*   **Base Positiva Bruta ($BP_i$):** El promedio ponderado de los componentes de valor positivo. Si el alcance está definido, el divisor es 6, de lo contrario es 5.
+    $$BP_i = \frac{\text{desempeno} + \text{contribucion} + \text{profundidad} + \text{duracion} + EQ_i + (\text{alcance si aplica})}{Divisor}$$
+
+*   **Penalización por Riesgo ($R_i$):** Se descuenta el puntaje de externalidades negativas latentes:
+    $$\text{Multiplicador de Riesgo} = 1 - \frac{\text{riesgo}}{100}$$
+
+*   **Puntaje de Nivel 1 Final ($S_{L1}$):**
+    $$S_{L1} = BP_i \times \left(1 - \frac{\text{riesgo}}{100}\right)$$
+
+##### 2. Calificación de la Dimensión (Level 2 Score)
+El puntaje de cada una de las dimensiones de impacto ($S_{L2}$) es la media ponderada de sus indicadores ($S_{L1}$), utilizando el valor de **Materialidad** como factor de ponderación ($W_{mat}$):
+
+$$S_{L2} = \frac{\sum (S_{L1} \times W_{mat})}{\sum W_{mat}}$$
+
+##### 3. ImpactIndex Global
+El índice principal que clasifica a las organizaciones es el promedio simple de las puntuaciones de las 7 dimensiones evaluadas:
+
+$$\text{ImpactIndex} = \frac{\sum_{d=1}^{7} S_{L2, d}}{7}$$
+
+##### 4. Sub-índices de Análisis (Analytics)
+El motor genera 5 sub-índices clave para tableros analíticos y gráficos de radar:
+
+*   **Impact Performance Score (IPS):** Mide el logro físico y la profundidad operativa:
+    $$\text{IPS} = \frac{1}{N} \sum \left( \frac{\text{desempeno} + \text{profundidad}}{2} \times \left(\frac{A_i}{100} \text{ o } 1\right) \right)$$
+*   **Impact Management Score (IMS):** Evalúa la planeación, materialidad y gobernanza del impacto:
+    $$\text{IMS} = \frac{1}{N} \sum \left( \frac{\text{contribucion} + \text{materialidad}}{2} \right)$$
+*   **Standards Coverage Score (SCS):** Nivel de adherencia formal de los indicadores a estándares globales (GRI, SASB, ODS):
+    $$\text{SCS} = \frac{\text{Indicadores con estándares asociados}}{\text{Total de Indicadores}} \times 100$$
+*   **Evidence Quality Score (EQS):** Grado de solidez de los datos presentados:
+    $$\text{EQS} = \frac{1}{N} \sum EQ_i$$
+*   **Net Impact Score (NIS):** Retorno de impacto neto tras deducir el promedio total de penalizaciones de riesgo:
+    $$\text{NIS} = \max(0, \overline{BP} - \overline{Riesgo})$$
+
+##### 5. AlternativeIndex
+Un índice secundario ponderado diseñado para priorizar la distribución balanceada de las métricas de gestión:
+
+$$\text{AlternativeIndex} = (0.30 \times \text{IPS}) + (0.20 \times \text{IMS}) + (0.15 \times \text{SCS}) + (0.15 \times \text{EQS}) + (0.20 \times \text{NIS})$$
+
+---
+
+### 5.7 Endpoints de la API REST
+
+Todos los endpoints están prefijados bajo la ruta `/api`.
+
+#### 1. Ingesta y Evaluación de Reportes
+*   **Ruta:** `POST /process-report`
+*   **Content-Type:** `multipart/form-data`
+*   **Parámetros Body:**
+    *   `documents`: Array de archivos (hasta 20 reportes PDF/Word/Texto simultáneos).
+    *   `organizationName`: *(Opcional)* Nombre manual de la organización.
+*   **Comportamiento:** Realiza la extracción de texto, vectorización, agrupamiento, análisis semántico multidimensional, cálculo de índices, guarda en la base de datos de Postgres y purga la base vectorial de forma segura.
+
+#### 2. Obtener Lista de Evaluaciones
+*   **Ruta:** `GET /reports`
+*   **Respuesta:** Retorna metadatos generales de todos los reportes evaluados en el sistema (slug, nombre de organización, color corporativo, dominio, año de reporte, ImpactIndex consolidado y puntuaciones por dimensión).
+
+#### 3. Obtener Detalle de Evaluación
+*   **Ruta:** `GET /report/:slug`
+*   **Query Params:** `?year=2023` *(Opcional)*
+*   **Respuesta:** Payload JSON completo con el desglose por indicadores, resumen ejecutivo narrativo y referencias a archivos almacenados en MediaAAS.
+
+#### 4. Tabla de Clasificación y Ranking
+*   **Ruta:** `GET /ranking`
+*   **Respuesta:** Listado ordenable optimizado para visualización de tablas comparativas de desempeño ESG basadas en `ImpactIndex` y `AlternativeIndex`.
+
+#### 5. Eliminar Reporte
+*   **Ruta:** `DELETE /report/:slug`
+*   **Query Params:** `?year=2023` *(Opcional)*
+*   **Comportamiento:** Elimina el registro físico de la base de datos de PostgreSQL y ejecuta llamadas asíncronas para eliminar los binarios correspondientes en AWS S3 mediante el servicio de MediaAAS.
+
+---
+
+### 5.8 Scripts de Soporte y Mantenimiento
+
+*   **Purger de caché inmutable:**
+    ```bash
+    npm run clean:cache
+    ```
+    Elimina físicamente los archivos JSON consolidados almacenados en el directorio `pdf/cache/`, forzando al motor RAG a recalcular las evaluaciones de reportes en la próxima subida.
+*   **Consola de Recálculo de Índices:**
+    ```bash
+    npx ts-node src/scripts/recalculate_alternative_index.ts
+    ```
+    Script diseñado para actualizar de forma masiva el `AlternativeIndex` de los reportes guardados en la base de datos cuando se modifican los coeficientes de ponderación algorítmica sin necesidad de re-evaluar con el LLM.
+*   **Limpieza de Base de Datos:**
+    ```bash
+    npx ts-node clear_db.ts
+    ```
+    Limpia por completo las tablas `reports`, `chunks` y `documents`, dejando la base de datos en estado inicial.
+
+---
+
+## 6. Especificación OpenAPI completa
 
 A continuación se muestra la especificación OpenAPI (Swagger) completa del backend en formato JSON.
 
