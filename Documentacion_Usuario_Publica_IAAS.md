@@ -1,80 +1,105 @@
-# Guía de Usuario y Documentación Pública (ImpactoSocial)
+# Guía de Usuario y del Motor de Evaluación (ImpactoSocial)
 
-Esta guía detalla el funcionamiento de la plataforma **ImpactoSocial** orientado al usuario final, clientes y visitantes públicos. Integra los flujos visuales del Frontend con el procesamiento automático del Motor RAG/ESG.
+Esta guía unificada detalla el funcionamiento de la plataforma **ImpactoSocial**, integrando la experiencia visual del Frontend (front-v2) con los procesos analíticos y algorítmicos del Motor de Evaluación (motor_IaaS).
 
 ---
 
-## Índice General de la Guía
+## Índice de Contenidos
 1. [Introducción a la Plataforma](#1-introducción-a-la-plataforma)
-2. [Carga de Reportes Corporativos (Ingesta)](#2-carga-de-reportes-corporativos-ingesta)
-3. [Visualización del Reporte de Evaluación ESG (Dashboard)](#3-visualización-del-reporte-de-evaluación-esg-dashboard)
-4. [Iniciativas de Impacto y Metas Cuantitativas](#4-iniciativas-de-impacto-y-metas-cuantitativas)
-5. [Ranking y Perfil Público de Organizaciones](#5-ranking-y-perfil-público-de-organizaciones)
+2. [Autenticación y Control de Acceso](#2-autenticación-y-control-de-acceso)
+3. [Tablero Principal e Indicadores Clave (Dashboard)](#3-tablero-principal-e-indicadores-clave-dashboard)
+4. [Módulo de Auditoría ESG y Procesamiento RAG](#4-módulo-de-auditoría-esg-y-procesamiento-rag)
+5. [Gestión de Iniciativas, Metas e Impacto](#5-gestión-de-iniciativas-metas-e-impacto)
+6. [Transparencia: Ranking y Perfil Público de Organizaciones](#6-transparencia-ranking-y-perfil-público-de-organizaciones)
 
 ---
 
 ## 1. Introducción a la Plataforma
 
-**ImpactoSocial** es un ecosistema digital que permite a las organizaciones auditar sus reportes corporativos bajo dimensiones ESG (Social, Ambiental, Gobernanza, etc.), registrar iniciativas de desarrollo social y transparentar las metas e impactos alcanzados ante inversionistas y la comunidad.
-
-*   **El Frontend (Interfaz de Usuario):** Una aplicación web moderna construida con principios de diseño premium (glassmorphism) que permite navegar por tableros interactivos, rankings públicos y perfiles empresariales.
-*   **El Motor (Procesamiento Analítico):** Un motor cognitivo (RAG) que analiza reportes no estructurados (PDF/DOCX), genera métricas de impacto y calcula el **ImpactIndex** de manera automatizada.
-
----
-
-## 2. Carga de Reportes Corporativos (Ingesta)
-
-Las organizaciones pueden auditar su documentación anual cargando archivos directamente a la plataforma desde su panel privado.
-
-### Flujo paso a paso del Usuario:
-1. Navegue a la sección **Mis Reportes** en el menú de navegación lateral.
-2. Identifique la zona interactiva superior con borde punteado diseñada para la subida de archivos (drag & drop).
-3. Arrastre sus archivos o haga clic en el área para abrir el selector de archivos (se permiten hasta 20 reportes PDF, Word o Texto simultáneamente).
-4. **Control de Organización:** Si va a cargar un documento que no incluye el nombre comercial explícito de su empresa en el texto, introduce el nombre en el cuadro de texto **"Nombre de la Organización (Opcional)"** antes de continuar.
-5. Presione el botón destacado **"Analizar Reporte"** para iniciar el análisis. Una barra de progreso indicará el avance del proceso.
-
-### Qué ocurre en el Motor (Procesamiento Técnico):
-*   El motor extrae el texto del reporte e identifica automáticamente datos como el año de publicación y el color corporativo representativo.
-*   Calcula un hash MD5 único del archivo para evitar re-análisis innecesarios y optimizar el tiempo de respuesta.
+El ecosistema **ImpactoSocial** está compuesto por dos componentes principales que trabajan de forma sincronizada:
+*   **La Interfaz de Usuario (Frontend):** Una Single Page Application (SPA) construida en React con Chakra UI y Framer Motion. Proporciona una interfaz moderna con efectos visuales avanzados (glassmorphism) y gráficos interactivos para la visualización de datos.
+*   **El Motor de Evaluación (Backend):** Servidor continuo en Express.js con soporte de TypeScript, base de datos PostgreSQL enriquecida con la extensión pgvector y modelos de lenguaje de OpenAI. Es el encargado de extraer, indexar, evaluar información no estructurada y calcular los índices ESG de las organizaciones.
 
 ---
 
-## 3. Visualización del Reporte de Evaluación ESG (Dashboard)
+## 2. Autenticación y Control de Acceso
 
-Una vez completado el procesamiento en el motor, los resultados se visualizan en un panel de control interactivo dentro de la plataforma.
+### Flujo en la Interfaz (Frontend):
+*   La pantalla de inicio de sesión (`/auth/signin`) presenta un diseño minimalista con una tarjeta central de acceso.
+*   El botón "Iniciar Sesión con Original Auth" redirige al usuario al portal externo seguro del proveedor de identidad.
+*   Una vez validadas las credenciales, el flujo retorna a la ruta del cliente (`/auth/return`), donde la interfaz almacena la sesión de manera segura mediante cookies e inicia el Dashboard.
 
-### Secciones interactivas para el Usuario:
-*   **Tarjetas de Calificación General:** En la parte superior se visualizan dos puntuaciones clave en medidores circulares:
-    *   **ImpactIndex:** El promedio general obtenido en la auditoría de sostenibilidad.
-    *   **AlternativeIndex:** Un índice secundario ponderado que prioriza la distribución balanceada de las métricas.
-*   **Gráfico de Radar ESG:** Un gráfico circular dinámico que muestra visualmente los puntajes desglosados en las 7 dimensiones de impacto. Pasar el puntero sobre cada vértice muestra el puntaje exacto de esa dimensión.
-*   **Resumen Ejecutivo:** Un recuadro de texto en español, redactado automáticamente por el motor de IA, que sintetiza los puntos fuertes y los riesgos detectados en el informe.
-*   **Fichas Desplegables de Auditoría:** Listado interactivo de las dimensiones evaluadas. Al hacer clic sobre cualquier dimensión (ej. *Social* o *Gobernanza*), se despliega la información metodológica:
-    *   La justificación técnica (**Reasoning**) dividida en *Análisis, Evidencia y Conclusión*.
-    *   La cita literal del reporte original usada como prueba de respaldo.
-    *   Etiquetas con colores correspondientes a marcos internacionales asociados (como `ODS-8` o `GRI-305`).
-*   **Exportar Reporte:** Un botón en la esquina superior derecha que permite generar un documento PDF limpio para su descarga directa.
+### Operación en el Motor (Backend):
+*   El backend expone el endpoint `/api/auth/validate_session` que comprueba la validez del token recibido de Original Auth.
+*   Si el correo del usuario no existe en la tabla `clients` de PostgreSQL, el motor provisiona una nueva cuenta y le asigna un identificador único (UUID).
+*   Se genera un token JWT firmado para asegurar las siguientes peticiones HTTP del cliente mediante la cabecera `Authorization`.
 
 ---
 
-## 4. Iniciativas de Impacto y Metas Cuantitativas
+## 3. Tablero Principal e Indicadores Clave (Dashboard)
 
-Los clientes pueden crear proyectos específicos para canalizar aportaciones y resolver necesidades comunitarias.
+### Flujo en la Interfaz (Frontend):
+*   Al ingresar a `/admin/dashboard`, el usuario visualiza cuatro tarjetas de rendimiento en la parte superior:
+    *   **Iniciativas Totales:** Cantidad de proyectos registrados.
+    *   **Iniciativas Activas / Completadas:** Estado operativo de las campañas.
+    *   **Progreso de Recaudación:** Porcentaje consolidado de las metas del cliente.
+    *   **Impacto Recibido:** Suma de aportaciones de donantes.
+*   En la parte central, se renderiza un gráfico de series temporales mensual utilizando la librería ApexCharts para facilitar la lectura del flujo histórico de impactos.
 
-### Flujo del Usuario:
-1. Diríjase a la pestaña **Iniciativas** en el panel de navegación y pulse el botón **"Nueva Iniciativa"**.
-2. Rellene los datos básicos (nombre, descripción, categoría, fechas de inicio y término) y suba una imagen de portada.
-3. **Establecer Metas (Needs):** Dentro de su iniciativa, cree metas cuantitativas en el modal correspondiente, especificando la cantidad requerida y la unidad de medida (ej. *"Recaudar $15,000 USD"* o *"Plantar 500 árboles"*).
-4. **Seguimiento de Aportes (Impacts):** La interfaz muestra un termómetro de progreso interactivo que se llena automáticamente a medida que los donantes registran aportaciones que satisfacen dichas necesidades.
-5. **Muro de Comentarios:** En la parte inferior, los usuarios pueden interactuar escribiendo mensajes de apoyo o sugerencias sobre el proyecto en el foro interactivo.
+### Operación en el Motor (Backend):
+*   El motor centraliza las peticiones mediante el endpoint `/api/clients/{client_id}/metrics/general`.
+*   Para evitar el problema de consultas secundarias múltiples (N+1 queries) en base de datos, el servidor realiza consultas relacionales optimizadas agregando los datos de las tablas `initiatives`, `needs` e `impacts`.
 
 ---
 
-## 5. Ranking y Perfil Público de Organizaciones
+## 4. Módulo de Auditoría ESG y Procesamiento RAG
 
-Para fomentar la transparencia, la plataforma expone de cara al público general las clasificaciones de las empresas.
+Este es el módulo central del sistema, donde la interacción visual se acopla directamente con la base de datos vectorial y el modelo de inteligencia artificial.
 
-### Flujo del Usuario Externo:
-*   **El Ranking Global:** Cualquier visitante web puede acceder al ranking interactivo (`/landing/ranking`), donde se visualiza el listado de las empresas ordenadas de mayor a menor según su puntuación **ImpactIndex**. La tabla cuenta con un buscador en tiempo real.
-*   **Perfil Público (`/clients/{slug}`):** Al hacer clic en una empresa del ranking, se carga su perfil público. La interfaz del perfil adapta automáticamente su color temático principal y sus botones a la paleta de color representativa que el motor extrajo del reporte de esa organización.
-*   **Exploración de Proyectos:** El visitante puede consultar las iniciativas activas de la organización, ver el progreso de sus metas y participar con aportes o comentarios en el muro de proyectos.
+### A. Subida del Reporte Corporativo (Frontend)
+*   En la ruta `/admin/reports`, el usuario dispone de un área de arrastre de archivos (drag & drop) desarrollada con la librería `react-dropzone`.
+*   El usuario puede cargar hasta 20 archivos simultáneamente (PDF, Word o Texto plano).
+*   Si la documentación pertenece a una organización externa cuyo nombre no está implícito en el texto, el usuario puede ingresarlo manualmente en el campo "Nombre de la Organización".
+*   Al pulsar "Analizar Reporte", se muestra una barra de progreso que indica el avance del procesamiento asíncrono.
+
+### B. Indexación y Búsqueda Semántica RAG (Backend)
+1.  **Deduplicación:** El motor calcula el hash MD5 del archivo subido. Si ya existe un reporte con ese mismo hash en la base de datos o en la caché JSON del servidor (`pdf/cache/`), devuelve los resultados guardados al instante.
+2.  **Extracción de Metadatos:** Si es un reporte nuevo, se envía el inicio del documento a `gpt-4o-mini` para identificar el nombre oficial de la organización, el año fiscal (`reportYear`), su dominio y un color corporativo representativo.
+3.  **Vectorización:** El texto completo se segmenta en fragmentos (chunks) de 2500 caracteres con un solapamiento de 300 caracteres para mantener el contexto.
+4.  **Almacenamiento Vectorial:** Utilizando el modelo de embeddings `text-embedding-3-small` de OpenAI, se generan vectores de 1536 dimensiones que se guardan temporalmente en la tabla `chunks` con tipo de dato `vector(1536)` (pgvector).
+5.  **Búsqueda Coseno:** El motor realiza consultas automáticas sobre los vectores para cada una de las 7 dimensiones ESG de la plataforma (Social, Ambiental, Cultural, Performance, Colaboración, Económico y Gobernanza), seleccionando los 8 fragmentos con mayor similitud semántica.
+6.  **Borrado por Privacidad:** Una vez calculadas las calificaciones, el motor ejecuta la función `deleteDocumentVectors` para eliminar permanentemente los vectores e información del documento del espacio vectorial de la base de datos, protegiendo la confidencialidad de la información.
+
+### C. Visualización e Interpretación de Resultados (Frontend)
+Una vez finalizado el procesamiento, la interfaz carga las métricas estructuradas en el cliente:
+*   **Puntuaciones Globales:** Se muestran las calificaciones consolidadas **ImpactIndex** e **AlternativeIndex** en medidores radiales animados.
+*   **Gráfico de Radar ESG:** Desglosa el desempeño de la empresa a través de las 7 dimensiones de impacto, utilizando la librería Recharts.
+*   **Resumen Ejecutivo:** Caja de texto con una síntesis conceptual redactada en español por la inteligencia artificial.
+*   **Tabla de Auditoría:** Lista expandible de las dimensiones evaluadas. Al abrir una pestaña, el usuario ve el razonamiento de la IA (dividido en Análisis, Evidencia y Conclusión), la cita exacta del texto original y etiquetas que indican su alineación con estándares internacionales (GRI, SASB, ODS) validados por el mapeador normativo del backend.
+*   **Exportar a PDF:** Botón que genera y descarga una versión limpia e imprimible de la evaluación usando la librería jspdf.
+
+---
+
+## 5. Gestión de Iniciativas, Metas e Impacto
+
+### Creación de Iniciativas y Carga de Metas (Frontend):
+*   El usuario administrador puede crear iniciativas en la pestaña "Iniciativas" pulsando "Crear Iniciativa". El formulario solicita título, descripción, categoría, portada y rango de fechas mediante un selector de calendario (`react-datepicker`).
+*   Posteriormente, en la pestaña de "Needs" (Metas), el usuario puede registrar metas de insumos o fondos monetarios en un modal emergente (ej. "Instalar 100 paneles solares").
+
+### Seguimiento de Aportes y Muro Social (Frontend y Backend):
+*   En la vista de la iniciativa individual (`/admin/my-initiative/:id`), el frontend muestra un termómetro dinámico de progreso. A medida que se registran aportaciones de impacto (donaciones en la base de datos), la barra se actualiza visualmente.
+*   **El Muro Social (Foro):** Permite a los usuarios añadir comentarios sobre los avances. El frontend lee los mensajes de forma ordenada y los envía al endpoint `/api/comments` en el backend, el cual los guarda con autor, texto y marca de tiempo en la tabla `comments` de PostgreSQL.
+
+---
+
+## 6. Transparencia: Ranking y Perfil Público de Organizaciones
+
+### El Ranking Global de Impacto:
+*   En la ruta pública `/landing/ranking`, el frontend despliega una tabla que muestra la lista de todas las empresas evaluadas.
+*   El usuario puede buscar organizaciones en tiempo real u ordenarlas por su puntaje consolidado de ImpactIndex o AlternativeIndex.
+*   El motor sirve esta información desde la tabla `reports` mediante el endpoint `/api/ranking`.
+
+### Perfil Público de la Empresa:
+*   Al acceder a `/clients/{slug}`, el frontend carga el perfil de la organización con un slug amigable de URL.
+*   **Cromática Dinámica:** La aplicación adapta automáticamente los tonos de la interfaz (botones, acentos de fondo) al color corporativo principal de la empresa que fue extraído previamente del reporte por el motor de IA.
+*   Muestra al visitante la información de contacto corporativa de la organización y el listado de sus iniciativas de impacto vigentes con sus respectivos estados de avance.
