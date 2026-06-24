@@ -9,6 +9,7 @@ Este repositorio contiene toda la documentación del proyecto unificada en un so
 4. [Resumen de Migración a Express (Word)](#4-resumen-de-migración-a-express)
 5. [Documentación Técnica del Backend (motor_IaaS)](#5-documentación-técnica-del-backend-motor_iaas)
 6. [Especificación OpenAPI completa (JSON)](#6-especificación-openapi-completa)
+7. [Guía de Usuario y Documentación Pública (Markdown)](./Documentacion_Usuario_Publica_IAAS.md)
 
 ---
 
