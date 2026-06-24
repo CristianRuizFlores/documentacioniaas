@@ -1,4 +1,4 @@
-# Documentación Unificada - Impact as a Service (IaaS)
+# Documentación IaaS
 
 Este repositorio contiene toda la documentación del proyecto unificada en un solo archivo Markdown.
 
