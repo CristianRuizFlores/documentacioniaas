@@ -10,6 +10,7 @@ Este repositorio contiene toda la documentación del proyecto unificada en un so
 5. [Documentación Técnica del Backend (motor_IaaS)](#5-documentación-técnica-del-backend-motor_iaas)
 6. [Especificación OpenAPI completa (JSON)](#6-especificación-openapi-completa)
 7. [Guía de Usuario y Documentación Pública (Markdown)](./Documentacion_Usuario_Publica_IAAS.md)
+8. [Manual de Usuario del Frontend (Markdown)](./Documentacion_Usuario_Frontend_IAAS.md)
 
 ---
 
